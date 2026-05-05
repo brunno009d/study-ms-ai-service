@@ -1,0 +1,32 @@
+# Ignorar control de versiones
+.git
+.gitignore
+
+# Ignorar entornos virtuales locales
+venv/
+.venv/
+env/
+
+# Ignorar caché de Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignorar archivos de configuración de IDE
+.vscode/
+.idea/
+
+# Ignorar archivos del sistema
+.DS_Store
+Thumbs.db
+
+# Ignorar archivos temporales o logs
+*.log
+tmp/
+scratch/
+
+# Nota: El Dockerfile actual copia .env explícitamente, 
+# pero es buena práctica manejarlo por variables de entorno externas.
+# Si prefieres que Docker no lo vea nunca, descomenta la línea de abajo:
+# .env
