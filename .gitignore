@@ -1,0 +1,27 @@
+# Entorno virtual
+venv/
+.venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Variables de entorno 
+.env
+
+# Archivos de sistema/IDE
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# Archivos del proyecto que no deben ir a Git
+BaseDeDatos.txt
+node_modules/
+dist/
+build/
