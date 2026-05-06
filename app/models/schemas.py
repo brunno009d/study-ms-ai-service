@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, AliasChoices
+from pydantic import BaseModel, Field
 from typing import List, Optional
 
 
@@ -45,7 +45,4 @@ class CurriculumParseResponse(BaseModel):
 
 class ParseCurriculumRequest(BaseModel):
     """Body del request para parsear una malla curricular."""
-    file_url: str = Field(
-        validation_alias=AliasChoices("file_url", "pdf_url"),
-        description="URL pública del archivo (PDF o imagen) almacenado en Supabase Storage"
-    )
+    file_url: str = Field(description="URL pública del archivo (PDF o imagen) almacenado en Supabase Storage")
