@@ -46,3 +46,38 @@ class CurriculumParseResponse(BaseModel):
 class ParseCurriculumRequest(BaseModel):
     """Body del request para parsear una malla curricular."""
     file_url: str = Field(description="URL pública del archivo (PDF o imagen) almacenado en Supabase Storage")
+
+
+# --- Schemas para chat inteligente con notas del ramo ---
+
+class ChatNotesRequest(BaseModel):
+    """
+    Body del request para chatear con la IA usando las notas del ramo como contexto.
+    El usuario escribe un mensaje libre y la IA responde basándose SOLO en las notas del ramo.
+    """
+    subject_id: int = Field(
+        description="ID del ramo/asignatura. La IA usará todas las notas de este ramo como contexto."
+    )
+    message: str = Field(
+        description="Mensaje del usuario. Puede ser una pregunta, pedido de resumen, consulta sobre conceptos, etc.",
+        min_length=1,
+        max_length=2000
+    )
+    save_as_note: bool = Field(
+        default=False,
+        description="Si es true, guarda la respuesta de la IA como una nueva nota dentro del ramo"
+    )
+
+
+class ChatNotesResponse(BaseModel):
+    """Respuesta de la IA basada en las notas del ramo."""
+    answer: str = Field(
+        description="Respuesta de la IA en formato Markdown, basada en las notas del ramo"
+    )
+    notes_used: int = Field(
+        description="Cantidad de notas del ramo que se usaron como contexto"
+    )
+    saved_note_id: Optional[int] = Field(
+        default=None,
+        description="ID de la nota guardada (solo si save_as_note fue true)"
+    )
