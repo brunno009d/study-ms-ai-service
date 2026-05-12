@@ -13,7 +13,8 @@ El proyecto utiliza una arquitectura limpia dividida por responsabilidades:
 
 ### 📁 `app/services/` (Lógica de Negocio)
 *   **`gemini_service.py`**: Contiene la lógica para interactuar con Google Gemini. Aquí se definen los "prompts" (instrucciones) y se gestiona la subida de archivos a la IA.
-*   **`pdf_service.py`**: Servicio utilitario para descargar PDFs desde URLs (como Supabase) y validar que el archivo sea correcto antes de procesarlo.
+*   **`pdf_service.py`**: Servicio utilitario para descargar PDFs desde URLs (como Supabase).
+*   **`notes_client.py`**: Cliente HTTP para la comunicación inter-servicios con `ps-ms-notes-materials-service`.
 
 ### 📁 `app/models/` (Contratos de Datos)
 *   **`schemas.py`**: Define los objetos **Pydantic**. Son esenciales en FastAPI porque:
@@ -39,14 +40,15 @@ El proyecto utiliza una arquitectura limpia dividida por responsabilidades:
 
 ## 🤖 Integración con IA (Gemini 2.5 Flash)
 
-Este servicio usa **Structured Outputs**. A diferencia de un chat normal donde la IA responde con texto libre, aquí le pasamos un esquema de datos.
+Este servicio utiliza capacidades avanzadas de Google Gemini para dos propósitos principales:
 
-**Flujo de una petición:**
-1.  El usuario envía una URL de PDF a `/parse-curriculum`.
-2.  `pdf_service` descarga el PDF en memoria.
-3.  `gemini_service` sube el PDF a la File API de Google.
-4.  Gemini analiza el PDF y devuelve un objeto JSON que encaja perfectamente con `CurriculumParseResponse`.
-5.  El servicio limpia los archivos temporales y devuelve el JSON al usuario.
+### 1. Extracción de Mallas Curriculares (Structured Outputs)
+A diferencia de un chat normal donde la IA responde con texto libre, aquí le pasamos un esquema de datos para parsear documentos.
+**Flujo:** URL de PDF/Imagen → Descarga → Subida a File API → Análisis → JSON Estructurado.
+
+### 2. Chat Inteligente con Notas (RAG)
+Implementa un sistema de **Generación Aumentada por Recuperación (RAG)**. El servicio recupera todas las notas de un ramo del usuario y las utiliza como contexto exclusivo para responder preguntas.
+**Flujo:** ID de Ramo → Petición a Microservicio de Notas → Inyección de Contexto en Gemini → Respuesta en Markdown → Guardado opcional de respuesta.
 
 ---
 
