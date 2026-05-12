@@ -10,6 +10,7 @@ class Settings:
     GOOGLE_API_KEY: str = os.getenv("GOOGLE_API_KEY", "")
     MODEL_NAME: str = "gemini-2.5-flash"
     PORT: int = int(os.getenv("PORT", "3006"))
+    NOTES_SERVICE_URL: str = os.getenv("NOTES_SERVICE_URL", "http://localhost:3005")
     
     # Supabase config
     SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
