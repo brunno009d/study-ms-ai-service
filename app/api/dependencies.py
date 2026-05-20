@@ -5,6 +5,7 @@ from app.core.config import supabase_client
 # Define el esquema de seguridad Bearer Token para FastAPI
 security = HTTPBearer()
 
+# Token del usuario (JWT) 
 async def require_auth(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
     """
     Dependencia de seguridad que valida el JWT de Supabase.
