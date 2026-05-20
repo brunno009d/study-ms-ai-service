@@ -5,40 +5,38 @@ from app.core.config import settings
 
 class NotesServiceClient:
     """
-    Cliente HTTP para comunicarse con ps-ms-notes-materials-service.
-    Usa llamadas service-to-service reenviando el JWT del usuario
-    para mantener la autenticación y el ownership de las notas.
+    Cliente HTTP para comunicarse con el servicio de notas (ps-ms-notes-materials-service).
+    Reenvía el JWT del usuario para mantener el contexto de autorización.
     """
 
-    @staticmethod
-    async def get_note_contents(subject_id: int, token: str) -> list:
+    _client: httpx.AsyncClient = None
+
+    @classmethod
+    def _get_client(cls) -> httpx.AsyncClient:
+        if cls._client is None or cls._client.is_closed:
+            cls._client = httpx.AsyncClient(timeout=15.0)
+        return cls._client
+
+    @classmethod
+    async def get_note_contents(cls, subject_id: int, token: str) -> list:
         """
-        Obtiene el contenido completo de TODAS las notas de un ramo.
-        La IA se encarga de filtrar e interpretar qué notas son relevantes
-        según el mensaje del usuario.
-        
-        Args:
-            subject_id: ID del ramo/asignatura
-            token: JWT del usuario autenticado (se reenvía al notes-service)
-            
-        Returns:
-            Lista de notas con id, title, content_text, created_at, tags
+        Obtiene el contenido completo de todas las notas asociadas a una asignatura.
         """
         url = f"{settings.NOTES_SERVICE_URL}/subject/{subject_id}/content"
 
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                response = await client.get(
-                    url,
-                    headers={"Authorization": f"Bearer {token}"}
-                )
-                response.raise_for_status()
-                return response.json()
+            client = cls._get_client()
+            response = await client.get(
+                url,
+                headers={"Authorization": f"Bearer {token}"}
+            )
+            response.raise_for_status()
+            return response.json()
 
         except httpx.TimeoutException:
             raise HTTPException(
                 status_code=504,
-                detail="Timeout al conectar con el servicio de notas. Verifica que esté corriendo."
+                detail="Timeout al conectar con el servicio de notas."
             )
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 403:
@@ -58,40 +56,32 @@ class NotesServiceClient:
         except httpx.ConnectError:
             raise HTTPException(
                 status_code=503,
-                detail="No se pudo conectar con el servicio de notas. Verifica que esté corriendo."
+                detail="No se pudo conectar con el servicio de notas."
             )
 
-    @staticmethod
-    async def save_summary_as_note(subject_id: int, summary_text: str, token: str) -> dict:
+    @classmethod
+    async def save_summary_as_note(cls, subject_id: int, summary_text: str, token: str) -> dict:
         """
-        Guarda la respuesta de la IA como una nueva nota dentro del ramo.
-        
-        Args:
-            subject_id: ID del ramo donde guardar la nota
-            summary_text: Contenido de la respuesta en Markdown
-            token: JWT del usuario autenticado
-            
-        Returns:
-            La nota creada con su ID
+        Guarda la respuesta generada por la IA como una nota nueva en el ramo correspondiente.
         """
         url = f"{settings.NOTES_SERVICE_URL}/"
 
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                response = await client.post(
-                    url,
-                    json={
-                        "subject_id": subject_id,
-                        "title": "📝 Respuesta IA",
-                        "content_text": summary_text
-                    },
-                    headers={
-                        "Authorization": f"Bearer {token}",
-                        "Content-Type": "application/json"
-                    }
-                )
-                response.raise_for_status()
-                return response.json()
+            client = cls._get_client()
+            response = await client.post(
+                url,
+                json={
+                    "subject_id": subject_id,
+                    "title": "📝 Respuesta IA",
+                    "content_text": summary_text
+                },
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json"
+                }
+            )
+            response.raise_for_status()
+            return response.json()
 
         except httpx.HTTPStatusError as e:
             raise HTTPException(
