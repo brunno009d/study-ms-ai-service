@@ -66,7 +66,7 @@ class GeminiService:
         uploaded_file = None
 
         try:
-            # 1. Guardar bytes en archivo temporal
+            # Guardamos el archivo de forma temporal para que Gemini lo pueda procesar
             import mimetypes
             extension = mimetypes.guess_extension(mime_type) or ".pdf"
             
@@ -76,7 +76,7 @@ class GeminiService:
                 tmp.write(file_bytes)
                 temp_path = tmp.name
 
-            # 2. Subir archivo a la File API de Gemini
+            # Subida a la File API de Google Gemini
             uploaded_file = gemini_client.files.upload(
                 file=temp_path,
                 config=types.UploadFileConfig(
@@ -85,7 +85,7 @@ class GeminiService:
                 )
             )
 
-            # 3. Generar contenido con Structured Output
+            # Solicitud estructurada a Gemini usando el schema de validación
             response = gemini_client.models.generate_content(
                 model=settings.MODEL_NAME,
                 contents=[
@@ -102,19 +102,16 @@ class GeminiService:
                 )
             )
 
-            # 4. El SDK parsea automáticamente al schema Pydantic
             parsed: CurriculumParseResponse = response.parsed
-
             if parsed is None:
                 raise HTTPException(
                     status_code=500,
                     detail="Gemini no pudo extraer datos del archivo. Verifica que sea una malla curricular válida."
                 )
 
-            # 5. Post-procesamiento: calcular total_credits si no vino del documento
             result = parsed.model_dump()
 
-            # Calcular total_credits si no vino del documento
+            # Si el total de créditos no viene explícito, lo calculamos sumando las materias
             if result["curriculum"]["total_credits"] is None:
                 total = sum(s["credits"] for s in result["subjects"])
                 result["curriculum"]["total_credits"] = total
@@ -129,7 +126,7 @@ class GeminiService:
                 detail=f"Error al procesar el archivo con Gemini: {str(e)}"
             )
         finally:
-            # Limpiar archivo temporal
+            # Limpieza de archivos temporales
             if temp_path and os.path.exists(temp_path):
                 os.remove(temp_path)
 
@@ -138,7 +135,7 @@ class GeminiService:
                 try:
                     gemini_client.files.delete(name=uploaded_file.name)
                 except Exception:
-                    pass  # No es crítico si falla la limpieza
+                    pass
 
     @staticmethod
     async def chat_with_notes(notes: list, user_message: str) -> str:
@@ -217,4 +214,246 @@ MENSAJE DEL ESTUDIANTE:
             raise HTTPException(
                 status_code=500,
                 detail=f"Error al generar respuesta con Gemini: {str(e)}"
+            )
+
+    # -> Módulo IA - Consejero academico
+
+    # Herramientas disponibles para el consejero
+    ADVISOR_TOOLS = [
+        types.Tool(function_declarations=[
+            types.FunctionDeclaration(
+                name="get_student_profile",
+                description="Obtiene el nombre y datos básicos del estudiante",
+                parameters=types.Schema(type="OBJECT", properties={})
+            ),
+            types.FunctionDeclaration(
+                name="get_full_curriculum",
+                description=(
+                    "Obtiene la malla curricular COMPLETA: carrera, institución, "
+                    "TODOS los ramos de TODOS los semestres con código/créditos/semestre/área, "
+                    "prerrequisitos entre ramos (IDs), y el estado de cada uno "
+                    "(aprobado, cursando, pendiente). Útil para: aconsejar sobre "
+                    "ramos importantes, analizar cadenas de prerrequisitos, "
+                    "sugerir qué tomar el próximo semestre, visión global de la carrera."
+                ),
+                parameters=types.Schema(type="OBJECT", properties={})
+            ),
+            types.FunctionDeclaration(
+                name="get_current_subjects",
+                description=(
+                    "Obtiene SOLO las materias que el estudiante está cursando actualmente "
+                    "(status='cursando'). Más liviano que get_full_curriculum. "
+                    "Útil cuando la pregunta es solo sobre el semestre actual."
+                ),
+                parameters=types.Schema(type="OBJECT", properties={})
+            ),
+            types.FunctionDeclaration(
+                name="get_all_grades",
+                description=(
+                    "Obtiene TODAS las calificaciones del estudiante en TODAS sus materias: "
+                    "por cada materia devuelve su árbol de categorías (certámenes, tareas, etc.) "
+                    "con peso, cada evaluación individual con nota/peso/simulación, y el resumen "
+                    "(promedio real, proyectado, aprobación). Útil para: visión global del rendimiento, "
+                    "comparar entre materias, detectar tendencias."
+                ),
+                parameters=types.Schema(type="OBJECT", properties={})
+            ),
+            types.FunctionDeclaration(
+                name="get_current_grades",
+                description=(
+                    "Obtiene las calificaciones SOLO de las materias que el estudiante "
+                    "está cursando actualmente. Más liviano que get_all_grades. "
+                    "Útil para: detectar ramos en riesgo este semestre, calcular qué nota "
+                    "necesita para aprobar, foco en lo inmediato."
+                ),
+                parameters=types.Schema(type="OBJECT", properties={})
+            ),
+            types.FunctionDeclaration(
+                name="get_calendar_events",
+                description=(
+                    "Obtiene los calendarios + TODOS los eventos de los próximos 30 días: "
+                    "exámenes, entregas, tareas, con fechas, tipo, color y nombre del calendario. "
+                    "Útil para: organizar plan de estudio, priorizar por cercanía, "
+                    "advertir sobre acumulación de entregas."
+                ),
+                parameters=types.Schema(type="OBJECT", properties={})
+            ),
+            types.FunctionDeclaration(
+                name="get_notes_overview",
+                description=(
+                    "Obtiene metadatos de TODAS las notas/apuntes: título, ramo al que "
+                    "pertenece (nombre y código), tags/etiquetas, fechas de creación. "
+                    "NO incluye contenido completo de las notas. "
+                    "Útil para: saber qué temas ha estudiado, cruzar con calificaciones "
+                    "para detectar lagunas de estudio, sugerir qué repasar."
+                ),
+                parameters=types.Schema(type="OBJECT", properties={})
+            ),
+        ])
+    ]
+
+    # System prompt del consejero
+    ADVISOR_SYSTEM_PROMPT = """
+Eres un consejero académico inteligente y empático de PopStudy.
+
+ROL: Asesor de estudios personalizado. Ayudas al estudiante a tomar mejores
+decisiones académicas basándote en SU información real.
+
+REGLAS:
+1. SOLO LECTURA: No puedes crear, modificar ni eliminar datos. Solo consultas y aconsejas.
+2. USA LAS HERRAMIENTAS: Consulta la información que necesites. No inventes datos.
+   Si la pregunta es sobre el semestre actual, usa las herramientas "current" (más livianas).
+   Si necesitas la visión completa de la carrera, usa las herramientas completas.
+3. SÉ ESPECÍFICO: Usa nombres de ramos, notas reales, fechas exactas.
+4. CRUZA INFORMACIÓN: Tu valor está en conectar datos de distintas fuentes:
+   - Calendario + calificaciones → priorizar estudio por urgencia + riesgo
+   - Prerrequisitos + progreso → aconsejar qué ramos tomar
+   - Notas/apuntes + calificaciones bajas → sugerir qué repasar
+5. Responde en español, Markdown, conciso pero completo.
+6. Sé motivador pero honesto. Si un ramo está en riesgo, dilo con datos.
+"""
+
+    @staticmethod
+    async def advisor_chat(user_message: str, token: str, student_id: str, session_id: str = None) -> dict:
+        """
+        Consejero académico con Function Calling y memoria de sesión.
+        
+        - Si session_id es None → crea una nueva sesión
+        - Si session_id existe → carga el historial y continúa la conversación
+        
+        Gemini recibe el historial de mensajes anteriores para mantener el contexto.
+        """
+        from app.services.microservices_client import MicroservicesClient
+        from app.repository.chat_repository import ChatRepository
+
+        # Mapa: nombre de la función → handler que la ejecuta
+        tool_handlers = {
+            "get_student_profile": lambda: MicroservicesClient.get_user_profile(token),
+            "get_full_curriculum": lambda: MicroservicesClient.get_curriculum(token),
+            "get_current_subjects": lambda: MicroservicesClient.get_current_subjects(token),
+            "get_all_grades": lambda: MicroservicesClient.get_grades(token),
+            "get_current_grades": lambda: MicroservicesClient.get_current_grades(token),
+            "get_calendar_events": lambda: MicroservicesClient.get_calendar(token),
+            "get_notes_overview": lambda: MicroservicesClient.get_notes(token),
+        }
+
+        # --- Gestión de sesión ---
+
+        if session_id:
+            # Verificar que la sesión existe y pertenece al estudiante
+            session = await ChatRepository.get_session_by_id(session_id)
+            if not session or session["student_id"] != student_id:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Sesión de chat no encontrada o no pertenece a este usuario."
+                )
+            # Actualizar timestamp de la sesión
+            await ChatRepository.update_session(session_id, {})
+        else:
+            # Creamos una sesión nueva si no existe
+            title = user_message[:80] + ("..." if len(user_message) > 80 else "")
+            session = await ChatRepository.create_session(student_id, title)
+            session_id = session["id"]
+
+        # Cargar los mensajes anteriores del chat para mantener el contexto
+        contents = []
+        if session_id:
+            history = await ChatRepository.get_recent_messages(session_id, limit=20)
+            for msg in history:
+                role = msg["role"]
+                
+                if role == "user":
+                    contents.append(
+                        types.Content(role="user", parts=[types.Part.from_text(text=msg["content"])])
+                    )
+                elif role == "model":
+                    contents.append(
+                        types.Content(role="model", parts=[types.Part.from_text(text=msg["content"])])
+                    )
+
+        # Agregar el mensaje actual del usuario
+        contents.append(
+            types.Content(role="user", parts=[types.Part.from_text(text=user_message)])
+        )
+
+        # Guardar mensaje del usuario
+        await ChatRepository.add_message(session_id, "user", user_message)
+
+        tools_used = []
+
+        config = types.GenerateContentConfig(
+            system_instruction=GeminiService.ADVISOR_SYSTEM_PROMPT,
+            tools=GeminiService.ADVISOR_TOOLS,
+            temperature=0.4,
+        )
+
+        try:
+            # Loop de seguridad para controlar llamadas recursivas de Function Calling
+            for _ in range(5):
+                response = gemini_client.models.generate_content(
+                    model=settings.MODEL_NAME,
+                    contents=contents,
+                    config=config,
+                )
+
+                if response.text:
+                    answer = response.text.strip()
+                    # Guardar respuesta de la IA en la sesión
+                    await ChatRepository.add_message(session_id, "model", answer)
+                    return {
+                        "answer": answer,
+                        "tools_used": tools_used,
+                        "session_id": session_id
+                    }
+
+                # Si Gemini pide llamar una función → ejecutarla
+                candidate = response.candidates[0]
+                part = candidate.content.parts[0]
+
+                if hasattr(part, "function_call") and part.function_call:
+                    fn_name = part.function_call.name
+                    handler = tool_handlers.get(fn_name)
+
+                    if handler:
+                        tools_used.append(fn_name)
+                        result = await handler()
+
+                        # Agregar al historial: respuesta de Gemini + resultado de la función
+                        contents.append(candidate.content)
+                        contents.append(
+                            types.Content(
+                                role="user",
+                                parts=[types.Part.from_function_response(
+                                    name=fn_name,
+                                    response={"result": result or "Sin datos disponibles para este estudiante."}
+                                )]
+                            )
+                        )
+                    else:
+                        break
+                else:
+                    # En caso de que no haya texto directo ni llamada de función
+                    if candidate.content and candidate.content.parts:
+                        text_parts = [p.text for p in candidate.content.parts if hasattr(p, 'text') and p.text]
+                        if text_parts:
+                            answer = "\n".join(text_parts).strip()
+                            await ChatRepository.add_message(session_id, "model", answer)
+                            return {
+                                "answer": answer,
+                                "tools_used": tools_used,
+                                "session_id": session_id
+                            }
+                    break
+
+            raise HTTPException(
+                status_code=500,
+                detail="La IA no pudo generar una respuesta. Intenta reformular tu pregunta."
+            )
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error al generar respuesta del consejero: {str(e)}"
             )
