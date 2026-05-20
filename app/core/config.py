@@ -11,6 +11,10 @@ class Settings:
     MODEL_NAME: str = "gemini-2.5-flash"
     PORT: int = int(os.getenv("PORT", "3006"))
     NOTES_SERVICE_URL: str = os.getenv("NOTES_SERVICE_URL", "http://localhost:3005")
+    USER_SERVICE_URL: str = os.getenv("USER_SERVICE_URL", "http://localhost:3001")
+    CURRICULUM_SERVICE_URL: str = os.getenv("CURRICULUM_SERVICE_URL", "http://localhost:3002")
+    GRADES_SERVICE_URL: str = os.getenv("GRADES_SERVICE_URL", "http://localhost:3003")
+    CALENDAR_SERVICE_URL: str = os.getenv("CALENDAR_SERVICE_URL", "http://localhost:3004")
     
     # Supabase config
     SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")

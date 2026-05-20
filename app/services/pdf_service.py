@@ -1,5 +1,6 @@
 import httpx
 from fastapi import HTTPException
+from app.core.config import settings
 
 # Tamaño máximo permitido para un PDF: 10 MB
 MAX_PDF_SIZE_BYTES = 10 * 1024 * 1024
@@ -7,11 +8,15 @@ MAX_PDF_SIZE_BYTES = 10 * 1024 * 1024
 
 async def download_file_from_url(file_url: str) -> tuple[bytes, str]:
     """
-    Descarga un archivo (PDF o imagen) desde una URL (típicamente Supabase Storage).
-    
-    Retorna una tupla con los bytes del archivo y su mime_type.
-    Lanza HTTPException si hay errores de red, tipo de archivo, o tamaño.
+    Descarga un archivo (PDF o imagen) desde una URL de Supabase Storage.
     """
+    # Validación de seguridad: el archivo debe estar alojado en el Supabase del proyecto
+    if not file_url.startswith("https://") or settings.SUPABASE_URL not in file_url:
+        raise HTTPException(
+            status_code=400,
+            detail="Acceso denegado: El archivo debe provenir del almacenamiento oficial de Supabase de este proyecto."
+        )
+
     try:
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             response = await client.get(file_url)
@@ -33,14 +38,11 @@ async def download_file_from_url(file_url: str) -> tuple[bytes, str]:
             detail=f"Error de conexión al descargar el archivo: {str(e)}"
         )
 
-    # Validar que sea un PDF o imagen por content-type
+    # Validamos tipos de archivos permitidos
     content_type = response.headers.get("content-type", "").lower()
     allowed_types = ["application/pdf", "image/jpeg", "image/png", "image/webp", "application/octet-stream"]
     
-    # Octet stream sometimes comes from Supabase when downloading directly
-    # In that case, we might need to guess the mime type from the URL, but let's keep it simple
     is_allowed = any(allowed in content_type for allowed in allowed_types)
-    
     if not is_allowed:
         raise HTTPException(
             status_code=400,
@@ -61,7 +63,7 @@ async def download_file_from_url(file_url: str) -> tuple[bytes, str]:
             detail="El archivo descargado está vacío."
         )
 
-    # Si es octet-stream pero es de supabase, a veces podemos inferirlo por la extensión del link
+    # Si viene con content-type genérico octet-stream, intentamos inferirlo
     if "octet-stream" in content_type:
         if file_url.lower().endswith(('.jpg', '.jpeg')):
             content_type = "image/jpeg"
