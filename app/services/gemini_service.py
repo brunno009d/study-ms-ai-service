@@ -87,7 +87,7 @@ class GeminiService:
 
             # Solicitud estructurada a Gemini usando el schema de validación
             response = gemini_client.models.generate_content(
-                model=settings.MODEL_NAME,
+                model=settings.VISION_MODEL_NAME,
                 contents=[
                     types.Part.from_uri(
                         file_uri=uploaded_file.uri,
@@ -190,7 +190,7 @@ MENSAJE DEL ESTUDIANTE:
 
         try:
             response = gemini_client.models.generate_content(
-                model=settings.MODEL_NAME,
+                model=settings.TEXT_MODEL_NAME,
                 contents=[full_prompt],
                 config=types.GenerateContentConfig(
                     temperature=0.4,  # Equilibrio: creativo para redactar, preciso para no inventar
@@ -391,7 +391,7 @@ REGLAS:
             # Loop de seguridad para controlar llamadas recursivas de Function Calling
             for _ in range(5):
                 response = gemini_client.models.generate_content(
-                    model=settings.MODEL_NAME,
+                    model=settings.TEXT_MODEL_NAME,
                     contents=contents,
                     config=config,
                 )
