@@ -1,9 +1,10 @@
 import os
+import json
 import tempfile
 from google.genai import types
 from fastapi import HTTPException
 
-from app.core.config import gemini_client, settings
+from app.core.config import gemini_client, openrouter_client, settings
 from app.models.schemas import CurriculumParseResponse
 
 
@@ -52,7 +53,11 @@ Cada nota tiene: título, contenido, fecha de creación y etiquetas (tags) opcio
 
 
 class GeminiService:
-    """Servicio para interactuar con la API de Google Gemini."""
+    """Servicio para interactuar con Gemini (visión) y OpenRouter (chat)."""
+
+    # ============================================================
+    # PARSING DE MALLA CURRICULAR — usa Gemini directo (visión)
+    # ============================================================
 
     @staticmethod
     async def parse_curriculum_file(file_bytes: bytes, mime_type: str) -> dict:
@@ -137,15 +142,17 @@ class GeminiService:
                 except Exception:
                     pass
 
+    # CHAT CON NOTAS — usa OpenRouter (modelos gratis)
+
     @staticmethod
     async def chat_with_notes(notes: list, user_message: str) -> str:
         """
         Recibe las notas del ramo como contexto y el mensaje del usuario,
-        y genera una respuesta en lenguaje natural usando Gemini.
+        y genera una respuesta en lenguaje natural usando OpenRouter.
         
         Este es un enfoque RAG (Retrieval-Augmented Generation):
         - Las notas son el "retrieval" (información real del usuario)
-        - Gemini es el "generation" (genera la respuesta)
+        - El modelo de OpenRouter es el "generation" (genera la respuesta)
         - La IA SOLO puede usar información de las notas
         
         Args:
@@ -177,33 +184,36 @@ class GeminiService:
             notes_context += f"{'='*60}\n"
             notes_context += f"{note.get('content_text', '(sin contenido)')}\n"
 
-        # Construir el prompt completo: system + contexto + pregunta del usuario
-        full_prompt = f"""{NOTES_CHAT_SYSTEM_PROMPT}
-
-========== NOTAS DEL RAMO ==========
-{notes_context}
-========== FIN DE LAS NOTAS ==========
-
-MENSAJE DEL ESTUDIANTE:
-{user_message}
-"""
+        # Construir mensajes para OpenRouter (formato OpenAI)
+        messages = [
+            {
+                "role": "system",
+                "content": NOTES_CHAT_SYSTEM_PROMPT
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"========== NOTAS DEL RAMO ==========\n"
+                    f"{notes_context}\n"
+                    f"========== FIN DE LAS NOTAS ==========\n\n"
+                    f"MENSAJE DEL ESTUDIANTE:\n{user_message}"
+                )
+            }
+        ]
 
         try:
-            response = gemini_client.models.generate_content(
-                model=settings.TEXT_MODEL_NAME,
-                contents=[full_prompt],
-                config=types.GenerateContentConfig(
-                    temperature=0.4,  # Equilibrio: creativo para redactar, preciso para no inventar
-                )
+            response = openrouter_client.chat.completions.create(
+                model=settings.OPENROUTER_TEXT_MODEL,
+                messages=messages,
+                temperature=0.4,  # Equilibrio: creativo para redactar, preciso para no inventar
             )
 
-            # Extraer el texto de la respuesta
-            answer = response.text
+            answer = response.choices[0].message.content
 
             if not answer or not answer.strip():
                 raise HTTPException(
                     status_code=500,
-                    detail="Gemini no generó una respuesta. Intenta reformular tu pregunta."
+                    detail="La IA no generó una respuesta. Intenta reformular tu pregunta."
                 )
 
             return answer.strip()
@@ -211,24 +221,41 @@ MENSAJE DEL ESTUDIANTE:
         except HTTPException:
             raise
         except Exception as e:
+            # Intentar con el modelo de fallback
+            try:
+                response = openrouter_client.chat.completions.create(
+                    model=settings.OPENROUTER_FALLBACK_MODEL,
+                    messages=messages,
+                    temperature=0.4,
+                )
+                answer = response.choices[0].message.content
+                if answer and answer.strip():
+                    return answer.strip()
+            except Exception:
+                pass
+
             raise HTTPException(
                 status_code=500,
-                detail=f"Error al generar respuesta con Gemini: {str(e)}"
+                detail=f"Error al generar respuesta con IA: {str(e)}"
             )
 
-    # -> Módulo IA - Consejero academico
+    # CONSEJERO ACADÉMICO — usa OpenRouter con Function Calling
 
-    # Herramientas disponibles para el consejero
-    ADVISOR_TOOLS = [
-        types.Tool(function_declarations=[
-            types.FunctionDeclaration(
-                name="get_student_profile",
-                description="Obtiene el nombre y datos básicos del estudiante",
-                parameters=types.Schema(type="OBJECT", properties={})
-            ),
-            types.FunctionDeclaration(
-                name="get_full_curriculum",
-                description=(
+    # Herramientas disponibles para el consejero (formato OpenAI)
+    ADVISOR_TOOLS_OPENAI = [
+        {
+            "type": "function",
+            "function": {
+                "name": "get_student_profile",
+                "description": "Obtiene el nombre y datos básicos del estudiante",
+                "parameters": {"type": "object", "properties": {}}
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_full_curriculum",
+                "description": (
                     "Obtiene la malla curricular COMPLETA: carrera, institución, "
                     "TODOS los ramos de TODOS los semestres con código/créditos/semestre/área, "
                     "prerrequisitos entre ramos (IDs), y el estado de cada uno "
@@ -236,60 +263,75 @@ MENSAJE DEL ESTUDIANTE:
                     "ramos importantes, analizar cadenas de prerrequisitos, "
                     "sugerir qué tomar el próximo semestre, visión global de la carrera."
                 ),
-                parameters=types.Schema(type="OBJECT", properties={})
-            ),
-            types.FunctionDeclaration(
-                name="get_current_subjects",
-                description=(
+                "parameters": {"type": "object", "properties": {}}
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_current_subjects",
+                "description": (
                     "Obtiene SOLO las materias que el estudiante está cursando actualmente "
                     "(status='cursando'). Más liviano que get_full_curriculum. "
                     "Útil cuando la pregunta es solo sobre el semestre actual."
                 ),
-                parameters=types.Schema(type="OBJECT", properties={})
-            ),
-            types.FunctionDeclaration(
-                name="get_all_grades",
-                description=(
+                "parameters": {"type": "object", "properties": {}}
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_all_grades",
+                "description": (
                     "Obtiene TODAS las calificaciones del estudiante en TODAS sus materias: "
                     "por cada materia devuelve su árbol de categorías (certámenes, tareas, etc.) "
                     "con peso, cada evaluación individual con nota/peso/simulación, y el resumen "
                     "(promedio real, proyectado, aprobación). Útil para: visión global del rendimiento, "
                     "comparar entre materias, detectar tendencias."
                 ),
-                parameters=types.Schema(type="OBJECT", properties={})
-            ),
-            types.FunctionDeclaration(
-                name="get_current_grades",
-                description=(
+                "parameters": {"type": "object", "properties": {}}
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_current_grades",
+                "description": (
                     "Obtiene las calificaciones SOLO de las materias que el estudiante "
                     "está cursando actualmente. Más liviano que get_all_grades. "
                     "Útil para: detectar ramos en riesgo este semestre, calcular qué nota "
                     "necesita para aprobar, foco en lo inmediato."
                 ),
-                parameters=types.Schema(type="OBJECT", properties={})
-            ),
-            types.FunctionDeclaration(
-                name="get_calendar_events",
-                description=(
+                "parameters": {"type": "object", "properties": {}}
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_calendar_events",
+                "description": (
                     "Obtiene los calendarios + TODOS los eventos de los próximos 30 días: "
                     "exámenes, entregas, tareas, con fechas, tipo, color y nombre del calendario. "
                     "Útil para: organizar plan de estudio, priorizar por cercanía, "
                     "advertir sobre acumulación de entregas."
                 ),
-                parameters=types.Schema(type="OBJECT", properties={})
-            ),
-            types.FunctionDeclaration(
-                name="get_notes_overview",
-                description=(
+                "parameters": {"type": "object", "properties": {}}
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_notes_overview",
+                "description": (
                     "Obtiene metadatos de TODAS las notas/apuntes: título, ramo al que "
                     "pertenece (nombre y código), tags/etiquetas, fechas de creación. "
                     "NO incluye contenido completo de las notas. "
                     "Útil para: saber qué temas ha estudiado, cruzar con calificaciones "
                     "para detectar lagunas de estudio, sugerir qué repasar."
                 ),
-                parameters=types.Schema(type="OBJECT", properties={})
-            ),
-        ])
+                "parameters": {"type": "object", "properties": {}}
+            }
+        },
     ]
 
     # System prompt del consejero
@@ -317,11 +359,10 @@ REGLAS:
     async def advisor_chat(user_message: str, token: str, student_id: str, session_id: str = None) -> dict:
         """
         Consejero académico con Function Calling y memoria de sesión.
+        Usa OpenRouter (modelos gratis) con el formato de herramientas de OpenAI.
         
         - Si session_id es None → crea una nueva sesión
         - Si session_id existe → carga el historial y continúa la conversación
-        
-        Gemini recibe el historial de mensajes anteriores para mantener el contexto.
         """
         from app.services.microservices_client import MicroservicesClient
         from app.repository.chat_repository import ChatRepository
@@ -355,49 +396,48 @@ REGLAS:
             session = await ChatRepository.create_session(student_id, title)
             session_id = session["id"]
 
+        # --- Construir historial de mensajes (formato OpenAI) ---
+
+        messages = [
+            {"role": "system", "content": GeminiService.ADVISOR_SYSTEM_PROMPT}
+        ]
+
         # Cargar los mensajes anteriores del chat para mantener el contexto
-        contents = []
         if session_id:
             history = await ChatRepository.get_recent_messages(session_id, limit=20)
             for msg in history:
                 role = msg["role"]
-                
                 if role == "user":
-                    contents.append(
-                        types.Content(role="user", parts=[types.Part.from_text(text=msg["content"])])
-                    )
+                    messages.append({"role": "user", "content": msg["content"]})
                 elif role == "model":
-                    contents.append(
-                        types.Content(role="model", parts=[types.Part.from_text(text=msg["content"])])
-                    )
+                    # OpenAI usa "assistant" en vez de "model"
+                    messages.append({"role": "assistant", "content": msg["content"]})
 
         # Agregar el mensaje actual del usuario
-        contents.append(
-            types.Content(role="user", parts=[types.Part.from_text(text=user_message)])
-        )
+        messages.append({"role": "user", "content": user_message})
 
         # Guardar mensaje del usuario
         await ChatRepository.add_message(session_id, "user", user_message)
 
         tools_used = []
 
-        config = types.GenerateContentConfig(
-            system_instruction=GeminiService.ADVISOR_SYSTEM_PROMPT,
-            tools=GeminiService.ADVISOR_TOOLS,
-            temperature=0.4,
-        )
-
         try:
             # Loop de seguridad para controlar llamadas recursivas de Function Calling
             for _ in range(5):
-                response = gemini_client.models.generate_content(
-                    model=settings.TEXT_MODEL_NAME,
-                    contents=contents,
-                    config=config,
+                response = openrouter_client.chat.completions.create(
+                    model=settings.OPENROUTER_TEXT_MODEL,
+                    messages=messages,
+                    tools=GeminiService.ADVISOR_TOOLS_OPENAI,
+                    tool_choice="auto",
+                    temperature=0.4,
                 )
 
-                if response.text:
-                    answer = response.text.strip()
+                choice = response.choices[0]
+                message = choice.message
+
+                # Si el modelo respondió con texto final (sin tool calls)
+                if message.content and not message.tool_calls:
+                    answer = message.content.strip()
                     # Guardar respuesta de la IA en la sesión
                     await ChatRepository.add_message(session_id, "model", answer)
                     return {
@@ -406,43 +446,65 @@ REGLAS:
                         "session_id": session_id
                     }
 
-                # Si Gemini pide llamar una función → ejecutarla
-                candidate = response.candidates[0]
-                part = candidate.content.parts[0]
-
-                if hasattr(part, "function_call") and part.function_call:
-                    fn_name = part.function_call.name
-                    handler = tool_handlers.get(fn_name)
-
-                    if handler:
-                        tools_used.append(fn_name)
-                        result = await handler()
-
-                        # Agregar al historial: respuesta de Gemini + resultado de la función
-                        contents.append(candidate.content)
-                        contents.append(
-                            types.Content(
-                                role="user",
-                                parts=[types.Part.from_function_response(
-                                    name=fn_name,
-                                    response={"result": result or "Sin datos disponibles para este estudiante."}
-                                )]
-                            )
-                        )
-                    else:
-                        break
-                else:
-                    # En caso de que no haya texto directo ni llamada de función
-                    if candidate.content and candidate.content.parts:
-                        text_parts = [p.text for p in candidate.content.parts if hasattr(p, 'text') and p.text]
-                        if text_parts:
-                            answer = "\n".join(text_parts).strip()
-                            await ChatRepository.add_message(session_id, "model", answer)
-                            return {
-                                "answer": answer,
-                                "tools_used": tools_used,
-                                "session_id": session_id
+                # Si el modelo quiere llamar funciones
+                if message.tool_calls:
+                    # Agregar el mensaje del asistente con las tool_calls al historial
+                    assistant_msg = {
+                        "role": "assistant",
+                        "content": message.content or "",
+                        "tool_calls": [
+                            {
+                                "id": tc.id,
+                                "type": "function",
+                                "function": {
+                                    "name": tc.function.name,
+                                    "arguments": tc.function.arguments
+                                }
                             }
+                            for tc in message.tool_calls
+                        ]
+                    }
+                    messages.append(assistant_msg)
+
+                    # Ejecutar cada función solicitada
+                    for tool_call in message.tool_calls:
+                        fn_name = tool_call.function.name
+                        handler = tool_handlers.get(fn_name)
+
+                        if handler:
+                            tools_used.append(fn_name)
+                            result = await handler()
+
+                            # Agregar el resultado de la herramienta al historial
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": tool_call.id,
+                                "content": json.dumps(
+                                    result or "Sin datos disponibles para este estudiante.",
+                                    ensure_ascii=False,
+                                    default=str
+                                )
+                            })
+                        else:
+                            # Herramienta no reconocida
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": tool_call.id,
+                                "content": json.dumps(
+                                    {"error": f"Herramienta '{fn_name}' no disponible."},
+                                    ensure_ascii=False
+                                )
+                            })
+                else:
+                    # Sin texto ni tool_calls — caso inesperado
+                    if message.content:
+                        answer = message.content.strip()
+                        await ChatRepository.add_message(session_id, "model", answer)
+                        return {
+                            "answer": answer,
+                            "tools_used": tools_used,
+                            "session_id": session_id
+                        }
                     break
 
             raise HTTPException(
