@@ -8,7 +8,8 @@ load_dotenv()
 class Settings:
     # Google AI config
     GOOGLE_API_KEY: str = os.getenv("GOOGLE_API_KEY", "")
-    MODEL_NAME: str = "gemini-2.5-flash"
+    VISION_MODEL_NAME: str = os.getenv("VISION_MODEL_NAME", "gemini-2.5-flash")
+    TEXT_MODEL_NAME: str = os.getenv("TEXT_MODEL_NAME", "gemini-2.5-flash-lite")
     PORT: int = int(os.getenv("PORT", "3006"))
     NOTES_SERVICE_URL: str = os.getenv("NOTES_SERVICE_URL", "http://localhost:3005")
     USER_SERVICE_URL: str = os.getenv("USER_SERVICE_URL", "http://localhost:3001")
