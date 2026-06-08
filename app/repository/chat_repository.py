@@ -7,22 +7,34 @@ class ChatRepository:
 
     # --- SESIONES ---
     @staticmethod
-    async def create_session(student_id: str, title: str = None) -> dict:
-        # Crea una nueva sesión de chat para el estudiante
+    async def create_session(student_id: str, title: str = None, subject_id: int = None) -> dict:
+        # Crea una nueva sesión de chat (advisor si subject_id=None, RAG si subject_id=int)
+        data = {"student_id": student_id, "title": title}
+        if subject_id is not None:
+            data["subject_id"] = subject_id
         result = supabase_client.from_("chat_sessions") \
-            .insert({
-                "student_id": student_id,
-                "title": title
-            }) \
+            .insert(data) \
             .execute()
         return result.data[0] if result.data else None
 
     @staticmethod
     async def get_sessions_by_student(student_id: str) -> list:
-        # Obtiene todas las sesiones de un estudiante, ordenadas por más recientes
+        # Obtiene sesiones del consejero (subject_id IS NULL)
         result = supabase_client.from_("chat_sessions") \
             .select("*") \
             .eq("student_id", student_id) \
+            .is_("subject_id", "null") \
+            .order("updated_at", desc=True) \
+            .execute()
+        return result.data or []
+
+    @staticmethod
+    async def get_sessions_by_subject(student_id: str, subject_id: int) -> list:
+        # Obtiene sesiones RAG de un ramo específico
+        result = supabase_client.from_("chat_sessions") \
+            .select("*") \
+            .eq("student_id", student_id) \
+            .eq("subject_id", subject_id) \
             .order("updated_at", desc=True) \
             .execute()
         return result.data or []
