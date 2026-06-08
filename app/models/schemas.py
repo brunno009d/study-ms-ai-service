@@ -67,6 +67,10 @@ class ChatNotesRequest(BaseModel):
         default=False,
         description="Si es true, guarda la respuesta de la IA como una nueva nota dentro del ramo"
     )
+    session_id: Optional[str] = Field(
+        default=None,
+        description="ID de sesión RAG existente. Si es null se crea una nueva sesión."
+    )
 
 
 class ChatNotesResponse(BaseModel):
@@ -80,6 +84,9 @@ class ChatNotesResponse(BaseModel):
     saved_note_id: Optional[int] = Field(
         default=None,
         description="ID de la nota guardada (solo si save_as_note fue true)"
+    )
+    session_id: str = Field(
+        description="ID de la sesión RAG (nueva o existente)"
     )
 
 
@@ -117,10 +124,11 @@ class AdvisorResponse(BaseModel):
 # --- Schemas para gestión de sesiones de chat ---
 
 class ChatSessionResponse(BaseModel):
-    """Sesión de chat del consejero."""
+    """Sesión de chat (consejero o RAG)."""
     id: str
     student_id: str
     title: Optional[str] = None
+    subject_id: Optional[int] = None
     created_at: str
     updated_at: str
 
