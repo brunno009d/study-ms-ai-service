@@ -7,14 +7,15 @@ from supabase import create_client, Client
 load_dotenv()
 
 class Settings:
-    # Google AI config (solo para parsing de PDFs/imágenes con visión)
+    # Google AI config
     GOOGLE_API_KEY: str = os.getenv("GOOGLE_API_KEY", "")
     VISION_MODEL_NAME: str = os.getenv("VISION_MODEL_NAME", "gemini-2.5-flash")
+    RAG_MODEL_NAME: str = os.getenv("RAG_MODEL_NAME", "gemini-2.0-flash-lite")
     PORT: int = int(os.getenv("PORT", "3006"))
 
-    # OpenRouter config (modelos gratis para chat y consejero)
+    # OpenRouter config (consejero académico)
     OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
-    OPENROUTER_TEXT_MODEL: str = os.getenv("OPENROUTER_TEXT_MODEL", "deepseek/deepseek-v4-flash:free")
+    OPENROUTER_TEXT_MODEL: str = os.getenv("OPENROUTER_TEXT_MODEL", "meta-llama/llama-3.3-70b-instruct:free")
     OPENROUTER_FALLBACK_MODEL: str = os.getenv("OPENROUTER_FALLBACK_MODEL", "google/gemma-4-31b-it:free")
 
     # URLs de microservicios internos
@@ -30,7 +31,7 @@ class Settings:
 
 settings = Settings()
 
-# Inicializar el cliente de Google Gemini (solo para visión/PDFs)
+# Inicializar el cliente de Google Gemini (visión/PDFs y RAG de notas)
 gemini_client = genai.Client(api_key=settings.GOOGLE_API_KEY)
 
 # Inicializar el cliente de OpenRouter (compatible con OpenAI SDK)

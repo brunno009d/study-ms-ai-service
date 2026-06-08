@@ -56,7 +56,26 @@ async def chat_notes(
     """
     token = credentials.credentials
 
-    # 1. Obtener TODAS las notas del ramo (la IA decide qué es relevante)
+    # 1. Gestión de sesión RAG
+    if request.session_id:
+        session = await ChatRepository.get_session_by_id(request.session_id)
+        if not session or session["student_id"] != user_id:
+            raise HTTPException(status_code=404, detail="Sesión no encontrada.")
+        session_id = request.session_id
+        await ChatRepository.update_session(session_id, {})
+    else:
+        title = request.message[:80] + ("..." if len(request.message) > 80 else "")
+        session = await ChatRepository.create_session(
+            student_id=user_id,
+            title=title,
+            subject_id=request.subject_id
+        )
+        session_id = session["id"]
+
+    # 2. Guardar mensaje del usuario
+    await ChatRepository.add_message(session_id, "user", request.message)
+
+    # 3. Obtener TODAS las notas del ramo
     notes = await NotesServiceClient.get_note_contents(
         subject_id=request.subject_id,
         token=token
@@ -68,13 +87,16 @@ async def chat_notes(
             detail="Este ramo no tiene notas con contenido. Crea algunas notas primero."
         )
 
-    # 2. Enviar las notas + mensaje del usuario a Gemini
+    # 4. Generar respuesta con Gemini
     answer = await GeminiService.chat_with_notes(
         notes=notes,
         user_message=request.message
     )
 
-    # 3. Guardar como nota si el usuario lo solicitó
+    # 5. Guardar respuesta de la IA
+    await ChatRepository.add_message(session_id, "model", answer)
+
+    # 6. Guardar como nota si el usuario lo solicitó
     saved_note_id = None
     if request.save_as_note:
         saved_note = await NotesServiceClient.save_summary_as_note(
@@ -87,7 +109,8 @@ async def chat_notes(
     return ChatNotesResponse(
         answer=answer,
         notes_used=len(notes),
-        saved_note_id=saved_note_id
+        saved_note_id=saved_note_id,
+        session_id=session_id
     )
 
 
@@ -125,11 +148,15 @@ async def advisor_chat(
 
 @router.get("/sessions", response_model=list[ChatSessionResponse], status_code=200)
 async def list_sessions(user_id: str = Depends(require_auth)):
-    """
-    Lista todas las sesiones de chat del estudiante, ordenadas por más recientes.
-    Útil para que el frontend muestre el historial de conversaciones.
-    """
+    """Lista sesiones del consejero académico (subject_id IS NULL)."""
     sessions = await ChatRepository.get_sessions_by_student(user_id)
+    return sessions
+
+
+@router.get("/rag-sessions/{subject_id}", response_model=list[ChatSessionResponse], status_code=200)
+async def list_rag_sessions(subject_id: int, user_id: str = Depends(require_auth)):
+    """Lista sesiones RAG de un ramo específico."""
+    sessions = await ChatRepository.get_sessions_by_subject(user_id, subject_id)
     return sessions
 
 
