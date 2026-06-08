@@ -142,31 +142,25 @@ class GeminiService:
                 except Exception:
                     pass
 
-    # CHAT CON NOTAS — usa OpenRouter (modelos gratis)
+    # CHAT CON NOTAS — usa Gemini Flash Lite (rápido para contextos grandes de RAG)
 
     @staticmethod
     async def chat_with_notes(notes: list, user_message: str) -> str:
         """
         Recibe las notas del ramo como contexto y el mensaje del usuario,
-        y genera una respuesta en lenguaje natural usando OpenRouter.
-        
-        Este es un enfoque RAG (Retrieval-Augmented Generation):
-        - Las notas son el "retrieval" (información real del usuario)
-        - El modelo de OpenRouter es el "generation" (genera la respuesta)
-        - La IA SOLO puede usar información de las notas
-        
+        y genera una respuesta en lenguaje natural usando Gemini Flash Lite.
+
         Args:
             notes: Lista de dicts con id, title, content_text, created_at, note_tags
             user_message: El mensaje/pregunta del estudiante
-            
+
         Returns:
             str: Respuesta de la IA en formato Markdown
         """
         # Construir el bloque de contexto con todas las notas
         notes_context = f"Total de notas disponibles en este ramo: {len(notes)}\n"
-        
+
         for i, note in enumerate(notes, 1):
-            # Extraer nombres de tags
             tags_str = ""
             if note.get("note_tags"):
                 tag_names = [
@@ -184,31 +178,24 @@ class GeminiService:
             notes_context += f"{'='*60}\n"
             notes_context += f"{note.get('content_text', '(sin contenido)')}\n"
 
-        # Construir mensajes para OpenRouter (formato OpenAI)
-        messages = [
-            {
-                "role": "system",
-                "content": NOTES_CHAT_SYSTEM_PROMPT
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"========== NOTAS DEL RAMO ==========\n"
-                    f"{notes_context}\n"
-                    f"========== FIN DE LAS NOTAS ==========\n\n"
-                    f"MENSAJE DEL ESTUDIANTE:\n{user_message}"
-                )
-            }
-        ]
+        full_prompt = (
+            f"========== NOTAS DEL RAMO ==========\n"
+            f"{notes_context}\n"
+            f"========== FIN DE LAS NOTAS ==========\n\n"
+            f"MENSAJE DEL ESTUDIANTE:\n{user_message}"
+        )
 
         try:
-            response = openrouter_client.chat.completions.create(
-                model=settings.OPENROUTER_TEXT_MODEL,
-                messages=messages,
-                temperature=0.4,  # Equilibrio: creativo para redactar, preciso para no inventar
+            response = gemini_client.models.generate_content(
+                model=settings.RAG_MODEL_NAME,
+                contents=full_prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=NOTES_CHAT_SYSTEM_PROMPT,
+                    temperature=0.4,
+                )
             )
 
-            answer = response.choices[0].message.content
+            answer = response.text
 
             if not answer or not answer.strip():
                 raise HTTPException(
@@ -220,23 +207,37 @@ class GeminiService:
 
         except HTTPException:
             raise
-        except Exception as e:
-            # Intentar con el modelo de fallback
+        except Exception as gemini_error:
+            # Fallback a OpenRouter si Gemini falla (rate limit, cuota, etc.)
+            error_str = str(gemini_error)
+            is_quota_error = "429" in error_str or "RESOURCE_EXHAUSTED" in error_str or "quota" in error_str.lower()
+
+            fallback_messages = [
+                {"role": "system", "content": NOTES_CHAT_SYSTEM_PROMPT},
+                {"role": "user", "content": full_prompt}
+            ]
+
             try:
-                response = openrouter_client.chat.completions.create(
+                fallback_response = openrouter_client.chat.completions.create(
                     model=settings.OPENROUTER_FALLBACK_MODEL,
-                    messages=messages,
+                    messages=fallback_messages,
                     temperature=0.4,
+                    timeout=50.0,
                 )
-                answer = response.choices[0].message.content
+                answer = fallback_response.choices[0].message.content
                 if answer and answer.strip():
                     return answer.strip()
             except Exception:
                 pass
 
+            if is_quota_error:
+                raise HTTPException(
+                    status_code=429,
+                    detail="Se alcanzó el límite de la IA. Intenta de nuevo en unos segundos."
+                )
             raise HTTPException(
                 status_code=500,
-                detail=f"Error al generar respuesta con IA: {str(e)}"
+                detail=f"Error al generar respuesta con IA: {error_str}"
             )
 
     # CONSEJERO ACADÉMICO — usa OpenRouter con Function Calling
@@ -430,6 +431,7 @@ REGLAS:
                     tools=GeminiService.ADVISOR_TOOLS_OPENAI,
                     tool_choice="auto",
                     temperature=0.4,
+                    timeout=50.0,
                 )
 
                 choice = response.choices[0]
