@@ -28,6 +28,8 @@ async def require_auth(credentials: HTTPAuthorizationCredentials = Depends(secur
         # Retornamos el userId por si algún controlador lo necesita
         return response.user.id
         
+    except HTTPException:
+        raise
     except Exception as e:
         # Cualquier error al decodificar el token o hablar con Supabase
         raise HTTPException(
