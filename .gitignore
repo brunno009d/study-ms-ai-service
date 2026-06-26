@@ -25,3 +25,6 @@ BaseDeDatos.txt
 node_modules/
 dist/
 build/
+
+# Coverage
+coverage/
