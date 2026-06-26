@@ -1,0 +1,39 @@
+name: CI — Tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: pytest
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio httpx
+
+      - name: Run tests
+        env:
+          GEMINI_API_KEY: placeholder-gemini-key
+          OPENROUTER_API_KEY: placeholder-openrouter-key
+          SUPABASE_URL: https://placeholder.supabase.co
+          SUPABASE_SERVICE_KEY: placeholder-service-key
+          USER_SERVICE_URL: http://localhost:3001
+          CURRICULUM_SERVICE_URL: http://localhost:3002
+          GRADES_SERVICE_URL: http://localhost:3003
+          CALENDAR_SERVICE_URL: http://localhost:3004
+          NOTES_SERVICE_URL: http://localhost:3005
+        run: python -m pytest tests/ -v
